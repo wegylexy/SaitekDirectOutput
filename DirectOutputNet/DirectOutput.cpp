@@ -2,10 +2,17 @@
 #include "DirectOutput.h"
 #define STRING(text) gcnew String(TEXT(text))
 #define _moduleLoadFunction(name) _##name = (Pfn_DirectOutput_##name)GetProcAddress(_module, "DirectOutput_"#name)
-#define throwIfPageNotActive case E_PAGENOTACTIVE: throw gcnew System::InvalidOperationException("The specified page is not active. Displaying information is not permitted when the page is not active.");
-#define throwIfOutOfMemory case E_OUTOFMEMORY: throw gcnew System::OutOfMemoryException("Insufficient memory to complete the request.");
-#define throwIfInvalidDevice case E_HANDLE: throw gcnew System::ArgumentException("The device handle specified is invalid.", "device");
-#define throwDefault(message) default: throw gcnew System::Exception(message);
+#define switchHr(hr) auto _hr = hr; switch (hr)
+#define throwHr(message) default: throw gcnew System::Runtime::InteropServices::ExternalException(message, _hr);
+#define outOfMemory gcnew System::Runtime::InteropServices::ExternalException("Ran out of memory", E_OUTOFMEMORY)
+#define handle gcnew System::Runtime::InteropServices::ExternalException("Invalid handle", E_HANDLE)
+#define throwIfOutOfMemory(message) case E_OUTOFMEMORY: throw gcnew System::OutOfMemoryException(message, outOfMemory);
+#define throwIfHandle(message) case E_HANDLE: throw gcnew System::InvalidOperationException(message, handle);
+#define throwIfInvalidArg(message, paramName) case E_INVALIDARG: throw gcnew System::ArgumentException(message, paramName, gcnew System::Runtime::InteropServices::ExternalException("One or more argruments are invalid", E_INVALIDARG));
+#define throwIfNotImpl(message) case E_NOTIMPL: throw gcnew System::NotImplementedException(message, gcnew System::Runtime::InteropServices::ExternalException("Not implemented", E_NOTIMPL));
+#define deviceThrowIfPageNotActive case E_PAGENOTACTIVE: throw gcnew System::Runtime::InteropServices::ExternalException("The specified page is not active. Displaying information is not permitted when the page is not active.", E_PAGENOTACTIVE);
+#define deviceThrowIfOutOfMemory case E_OUTOFMEMORY: throw gcnew System::OutOfMemoryException("Insufficient memory to complete the request.", outOfMemory);
+#define deviceThrowIfHandle case E_HANDLE: throw gcnew System::ArgumentException("The device handle specified is invalid.", "device", handle);
 
 using namespace System;
 using namespace System::Runtime::InteropServices;
@@ -81,22 +88,22 @@ DirectOutputClient::~DirectOutputClient() {
 void DirectOutputClient::Initialize(String^ pluginName) {
 	if (!_Initialize)
 		throw gcnew NotImplementedException;
-	switch (_Initialize(pluginName ? CString(pluginName) : (LPCTSTR)NULL)) {
+	switchHr(_Initialize(pluginName ? CString(pluginName) : (LPCTSTR)NULL)) {
 	case S_OK: break;
-	case E_OUTOFMEMORY: throw gcnew OutOfMemoryException("There was insufficient memory to complete this call.");
-	case E_INVALIDARG: throw gcnew ArgumentException("The argument is invalid.", "pluginName");
-	case E_HANDLE: throw gcnew InvalidOperationException("The DirectOutputManager process cound not be found.");
-		throwDefault("Unable to initialize DirectOutput.")
+		throwIfOutOfMemory("There was insufficient memory to complete this call.")
+			throwIfInvalidArg("The argument is invalid.", "pluginName")
+			throwIfHandle("The DirectOutputManager process cound not be found.")
+			throwHr("Unable to initialize DirectOutput.")
 	}
 }
 
 void DirectOutputClient::Deinitialize() {
 	if (!_Deinitialize)
 		throw gcnew NotImplementedException;
-	switch (_Deinitialize()) {
+	switchHr(_Deinitialize()) {
 	case S_OK: break;
-	case E_HANDLE: throw gcnew InvalidOperationException("DirectOutput was not initialized or was already deinitialized.");
-		throwDefault("Unable to deinitialize DirectOutput.")
+		throwIfHandle("DirectOutput was not initialized or was already deinitialized.")
+			throwHr("Unable to deinitialize DirectOutput.")
 	}
 }
 
@@ -118,10 +125,10 @@ void DirectOutputClient::DeviceChanged::add(DeviceChangedEventHandler^ handler) 
 	if (!_RegisterDeviceCallback)
 		throw gcnew NotImplementedException;
 	if (!_registeredDeviceCallback) {
-		switch (_RegisterDeviceCallback(_DeviceChangeCallback, (void*)(IntPtr)_this)) {
-		case S_OK: break;
-		case E_HANDLE: throw gcnew InvalidOperationException("DirectOutput was not initialized.");
-			throwDefault("Unable to register the device change callback.")
+		switchHr(_RegisterDeviceCallback(_DeviceChangeCallback, (void*)(IntPtr)_this)) {
+	case S_OK: break;
+		throwIfHandle("DirectOutput was not initialized.")
+			throwHr("Unable to register the device change callback.")
 		}
 	}
 	++_registeredDeviceCallback;
@@ -144,10 +151,10 @@ void DirectOutputClient::Enumerate() {
 		throw gcnew NotImplementedException;
 	if (!_registeredDeviceCallback)
 		throw gcnew InvalidOperationException("DeviceChanged event has no handlers.");
-	switch (_Enumerate(_DeviceEnumerateCallback, (void*)(IntPtr)_this)) {
+	switchHr(_Enumerate(_DeviceEnumerateCallback, (void*)(IntPtr)_this)) {
 	case S_OK: break;
-	case E_HANDLE: throw gcnew InvalidOperationException("DirectOutput was not initialized.");
-		throwDefault("Unable to enumerate devices.")
+		throwIfHandle("DirectOutput was not initialized.")
+			throwHr("Unable to enumerate devices.")
 	}
 }
 
@@ -161,6 +168,8 @@ DeviceClient::~DeviceClient() {
 		_client->_RegisterPageCallback(_device, NULL, NULL);
 	if (_registeredSoftButtonCallback)
 		_client->_RegisterSoftButtonCallback(_device, NULL, NULL);
+	for each(auto page in pages)
+		this->RemovePage(page);
 	if (_this.IsAllocated)
 		_this.Free();
 }
@@ -169,11 +178,11 @@ Guid DeviceClient::GetDeviceType() {
 	if (!_client->_GetDeviceType)
 		throw gcnew NotImplementedException;
 	GUID guid;
-	switch (_client->_GetDeviceType(_device, &guid)) {
+	switchHr(_client->_GetDeviceType(_device, &guid)) {
 	case S_OK: break;
-	case E_INVALIDARG: throw gcnew ArgumentException("An argument in invalid.", "device");
-	case E_HANDLE: throw gcnew InvalidOperationException("DirectOutput was not initialized.");
-		throwDefault("Unable to get the device type.")
+		throwIfInvalidArg("An argument in invalid.", "device")
+			throwIfHandle("DirectOutput was not initialized.")
+			throwHr("Unable to get the device type.")
 	}
 	return FromGUID(guid);
 }
@@ -182,12 +191,12 @@ Guid DeviceClient::GetDeviceInstance() {
 	if (!_client->_GetDeviceInstance)
 		throw gcnew NotImplementedException;
 	GUID guid;
-	switch (_client->_GetDeviceInstance(_device, &guid)) {
+	switchHr(_client->_GetDeviceInstance(_device, &guid)) {
 	case S_OK: break;
-	case E_NOTIMPL: throw gcnew NotImplementedException("This device does not support DirectInput.");
-	case E_INVALIDARG: throw gcnew ArgumentException("An argument in invalid.", "device");
-	case E_HANDLE: throw gcnew InvalidOperationException("DirectOutput was not initialized.");
-		throwDefault("Unable to get the device instance.")
+		throwIfNotImpl("This device does not support DirectInput.")
+			throwIfInvalidArg("An argument in invalid.", "device")
+			throwIfHandle("DirectOutput was not initialized.")
+			throwHr("Unable to get the device instance.")
 	}
 	return FromGUID(guid);
 }
@@ -196,9 +205,9 @@ String^ DeviceClient::GetSerialNumber() {
 	if (!_client->_GetSerialNumber)
 		throw gcnew NotImplementedException;
 	wchar_t s[16] = { 0 };
-	switch (_client->_GetSerialNumber(_device, s, 16)) {
+	switchHr(_client->_GetSerialNumber(_device, s, 16)) {
 	case S_OK: break;
-		throwDefault("Unable to get serial number.")
+		throwHr("Unable to get serial number.")
 	}
 	return gcnew String(s);
 }
@@ -208,12 +217,12 @@ void DeviceClient::SetProfile(String^ filename) {
 		throw gcnew NotImplementedException;
 	if (String::IsNullOrEmpty(filename))
 		throw gcnew ArgumentException("Null or empty filename.", "filename");
-	switch (_client->_SetProfile(_device, filename->Length, (CString)filename)) {
+	switchHr(_client->_SetProfile(_device, filename->Length, (CString)filename)) {
 	case S_OK: break;
-	case E_NOTIMPL: throw gcnew NotImplementedException("The device does not support profiling.");
-		throwIfOutOfMemory
-			throwIfInvalidDevice
-			throwDefault("Unable to set the profile.")
+		throwIfNotImpl("The device does not support profiling.")
+			deviceThrowIfOutOfMemory
+			deviceThrowIfHandle
+			throwHr("Unable to set the profile.")
 	}
 }
 
@@ -230,10 +239,10 @@ void DeviceClient::SoftButtons::add(SoftButtonsEventHandler^ handler) {
 	if (!_client->_RegisterSoftButtonCallback)
 		throw gcnew NotImplementedException;
 	if (!_registeredSoftButtonCallback) {
-		switch (_client->_RegisterSoftButtonCallback(_device, _SoftButtonCallback, (void*)(IntPtr)_this)) {
-		case S_OK: break;
-			throwIfInvalidDevice
-				throwDefault("Unable to register the soft buttons callback.")
+		switchHr(_client->_RegisterSoftButtonCallback(_device, _SoftButtonCallback, (void*)(IntPtr)_this)) {
+	case S_OK: break;
+		deviceThrowIfHandle
+			throwHr("Unable to register the soft buttons callback.")
 		}
 	}
 	++_registeredSoftButtonCallback;
@@ -264,10 +273,10 @@ void DeviceClient::Page::add(PageEventHandler^ handler) {
 	if (!_client->_RegisterPageCallback)
 		throw gcnew NotImplementedException;
 	if (!_registeredPageCallback) {
-		switch (_client->_RegisterPageCallback(_device, _PageCallback, (void*)(IntPtr)_this)) {
-		case S_OK: break;
-			throwIfInvalidDevice
-				throwDefault("Unable to register the page callback.")
+		switchHr(_client->_RegisterPageCallback(_device, _PageCallback, (void*)(IntPtr)_this)) {
+	case S_OK: break;
+		deviceThrowIfHandle
+			throwHr("Unable to register the page callback.")
 		}
 	}
 	++_registeredPageCallback;
@@ -288,48 +297,48 @@ void DeviceClient::Page::raise(Object^ sender, PageEventArgs^ e) {
 void DeviceClient::AddPage(DWORD page, PageFlags flags) {
 	if (!_client->_AddPage)
 		throw gcnew NotImplementedException;
-	switch (_client->_AddPage(_device, page, (DWORD)flags)) {
-	case S_OK: break;
-		throwIfOutOfMemory
-	case E_INVALIDARG: throw gcnew ArgumentException("The page already exists.", "page");
-		throwIfInvalidDevice
-			throwDefault("Unable to add the page.")
+	switchHr(_client->_AddPage(_device, page, (DWORD)flags)) {
+	case S_OK: pages->Add(page); break;
+		deviceThrowIfOutOfMemory
+			throwIfInvalidArg("The page already exists.", "page")
+			deviceThrowIfHandle
+			throwHr("Unable to add the page.")
 	}
 }
 
 void DeviceClient::RemovePage(DWORD page) {
 	if (!_client->_RemovePage)
 		throw gcnew NotImplementedException;
-	switch (_client->_RemovePage(_device, page)) {
-	case S_OK: break;
-	case E_INVALIDARG: throw gcnew ArgumentException("The page does not reference a valid page id.", "page");
-		throwIfInvalidDevice
-			throwDefault("Unable to remove the page.")
+	switchHr(_client->_RemovePage(_device, page)) {
+	case S_OK: pages->Remove(page); break;
+		throwIfInvalidArg("The page does not reference a valid page id.", "page")
+			deviceThrowIfHandle
+			throwHr("Unable to remove the page.")
 	}
 }
 
 void DeviceClient::SetLed(DWORD page, DWORD index, bool value) {
 	if (!_client->_SetLed)
 		throw gcnew NotImplementedException;
-	switch (_client->_SetLed(_device, page, index, value)) {
+	switchHr(_client->_SetLed(_device, page, index, value)) {
 	case S_OK: break;
-		throwIfPageNotActive
-	case E_INVALIDARG: throw gcnew ArgumentException("The page does not reference a valid page id, or the index does not specifiy a valid LED id.", "page|id");
-		throwIfInvalidDevice
-			throwDefault("Unable to set LED.")
+		deviceThrowIfPageNotActive
+			throwIfInvalidArg("The page does not reference a valid page id, or the index does not specifiy a valid LED id.", "page|id")
+			deviceThrowIfHandle
+			throwHr("Unable to set LED.")
 	}
 }
 
 void DeviceClient::SetString(DWORD page, DWORD index, String^ value) {
 	if (!_client->_SetString)
 		throw gcnew NotImplementedException;
-	switch (_client->_SetString(_device, page, index, value ? value->Length : 0, value ? CString(value) : (LPCTSTR)NULL)) {
+	switchHr(_client->_SetString(_device, page, index, value ? value->Length : 0, value ? CString(value) : (LPCTSTR)NULL)) {
 	case S_OK: break;
-		throwIfPageNotActive
-	case E_INVALIDARG: throw gcnew ArgumentException("The page does not reference a valid page id, or the index does not reference a valid string id.", "page|id");
-		throwIfOutOfMemory
-			throwIfInvalidDevice
-			throwDefault("Unable to set string.")
+		deviceThrowIfPageNotActive
+			throwIfInvalidArg("The page does not reference a valid page id, or the index does not reference a valid string id.", "page|id")
+			deviceThrowIfOutOfMemory
+			deviceThrowIfHandle
+			throwHr("Unable to set string.")
 	}
 }
 
@@ -337,13 +346,13 @@ void DeviceClient::SetImage(DWORD page, DWORD index, array<Byte>^ value) {
 	if (!_client->_SetImage)
 		throw gcnew NotImplementedException;
 	pin_ptr<Byte> _value = &value[0];
-	switch (_client->_SetImage(_device, page, index, value->Length, _value)) {
+	switchHr(_client->_SetImage(_device, page, index, value->Length, _value)) {
 	case S_OK: break;
-		throwIfPageNotActive
-	case E_INVALIDARG: throw gcnew ArgumentException("The page argument does not reference a valid page id, or the index does not reference a valid image id.", "page|index");
-		throwIfOutOfMemory
-			throwIfInvalidDevice
-			throwDefault("Unable to set image.")
+		deviceThrowIfPageNotActive
+			throwIfInvalidArg("The page argument does not reference a valid page id, or the index does not reference a valid image id.", "page|index")
+			deviceThrowIfOutOfMemory
+			deviceThrowIfHandle
+			throwHr("Unable to set image.")
 	}
 
 }
@@ -351,13 +360,13 @@ void DeviceClient::SetImage(DWORD page, DWORD index, array<Byte>^ value) {
 void DeviceClient::SetImageFromFile(DWORD page, DWORD index, String^ filename) {
 	if (!_client->_SetImageFromFile)
 		throw gcnew NotImplementedException;
-	switch (_client->_SetImageFromFile(_device, page, index, filename->Length, (CString)filename)) {
+	switchHr(_client->_SetImageFromFile(_device, page, index, filename->Length, (CString)filename)) {
 	case S_OK: break;
-		throwIfPageNotActive
-	case E_INVALIDARG: throw gcnew ArgumentException("The page does not refereence a valid page id, or the index does not reference a valid image id.");
-		throwIfOutOfMemory
-			throwIfInvalidDevice
-			throwDefault("Unable to set image from file.")
+		deviceThrowIfPageNotActive
+			throwIfInvalidArg("The page does not refereence a valid page id, or the index does not reference a valid image id.", "page|index")
+			deviceThrowIfOutOfMemory
+			deviceThrowIfHandle
+			throwHr("Unable to set image from file.")
 	}
 }
 
@@ -371,12 +380,12 @@ void _ServerRequestStatus(ServerRequestStatus% managed, SRequestStatus &native) 
 void _StartServer(DirectOutputClient^ client, void* device, String^ filename, DWORD& serverId, SRequestStatus* status) {
 	if (!client->_StartServer)
 		throw gcnew NotImplementedException;
-	switch (client->_StartServer(device, filename->Length, (CString)filename, &serverId, status)) {
+	switchHr(client->_StartServer(device, filename->Length, (CString)filename, &serverId, status)) {
 	case S_OK: break;
-	case E_NOTIMPL: throw gcnew NotImplementedException("The device does not support server applications.");
-		throwIfOutOfMemory
-			throwIfInvalidDevice
-			throwDefault("Unable to start server.")
+		throwIfNotImpl("The device does not support server applications.")
+			deviceThrowIfOutOfMemory
+			deviceThrowIfHandle
+			throwHr("Unable to start server.")
 	}
 }
 
@@ -399,12 +408,12 @@ void DeviceClient::StartServer(String^ filename, DWORD% serverId, ServerRequestS
 void _CloseServer(DirectOutputClient^ client, void* device, DWORD serverId, SRequestStatus* status) {
 	if (!client->_CloseServer)
 		throw gcnew NotImplementedException;
-	switch (client->_CloseServer(device, serverId, status)) {
+	switchHr(client->_CloseServer(device, serverId, status)) {
 	case S_OK: break;
-	case E_NOTIMPL: throw gcnew NotImplementedException("The device does not support server applications.");
-		throwIfOutOfMemory
-			throwIfInvalidDevice
-			throwDefault("The device handle specified is invalid.");
+		throwIfNotImpl("The device does not support server applications.")
+			deviceThrowIfOutOfMemory
+			deviceThrowIfHandle
+			throwHr("The device handle specified is invalid.");
 	}
 }
 
@@ -420,13 +429,13 @@ void _SendServerMessage(DirectOutputClient^ client, void* device, DWORD serverId
 	if (!client->_SendServerMsg)
 		throw gcnew NotImplementedException;
 	pin_ptr<Byte> _in = &in[0], _out = &out[0];
-	switch (client->_SendServerMsg(device, serverId, request, page, in->Length, _in, out->Length, _out, status)) {
+	switchHr(client->_SendServerMsg(device, serverId, request, page, in->Length, _in, out->Length, _out, status)) {
 	case S_OK: break;
-	case E_NOTIMPL: throw gcnew NotImplementedException("The device does not support server applications.");
-		throwIfPageNotActive
-			throwIfOutOfMemory
-			throwIfInvalidDevice
-			throwDefault("Unable to send server message.");
+		throwIfNotImpl("The device does not support server applications.")
+			deviceThrowIfPageNotActive
+			deviceThrowIfOutOfMemory
+			deviceThrowIfHandle
+			throwHr("Unable to send server message.");
 	}
 }
 
@@ -442,13 +451,13 @@ void _SendServerFile(DirectOutputClient^ client, void* device, DWORD serverId, D
 	if (!client->_SendServerFile)
 		throw gcnew NotImplementedException;
 	pin_ptr<Byte> _inHeader = &inHeader[0], _out = &out[0];
-	switch (client->_SendServerFile(device, serverId, request, page, inHeader->Length, _inHeader, filename->Length, (CString)filename, out->Length, _out, status)) {
+	switchHr(client->_SendServerFile(device, serverId, request, page, inHeader->Length, _inHeader, filename->Length, (CString)filename, out->Length, _out, status)) {
 	case S_OK: break;
-	case E_NOTIMPL: throw gcnew NotImplementedException("The device does not support server applications.");
-		throwIfPageNotActive
-			throwIfOutOfMemory
-			throwIfInvalidDevice
-			throwDefault("Unable to send server file.");
+		throwIfNotImpl("The device does not support server applications.")
+			deviceThrowIfPageNotActive
+			deviceThrowIfOutOfMemory
+			deviceThrowIfHandle
+			throwHr("Unable to send server file.");
 	}
 }
 
@@ -463,12 +472,12 @@ void DeviceClient::SendServerFile(DWORD serverId, DWORD request, DWORD page, arr
 void _SaveFile(DirectOutputClient^ client, void* device, DWORD page, DWORD file, String^ filename, SRequestStatus* status) {
 	if (!client->_SaveFile)
 		throw gcnew NotImplementedException;
-	switch (client->_SaveFile(device, page, file, filename->Length, (CString)filename, status)) {
+	switchHr(client->_SaveFile(device, page, file, filename->Length, (CString)filename, status)) {
 	case S_OK: break;
-	case E_NOTIMPL: throw gcnew NotImplementedException("The device does not support saving files.");
-		throwIfOutOfMemory
-			throwIfInvalidDevice
-			throwDefault("Unable to save file.");
+		throwIfNotImpl("The device does not support saving files.")
+			deviceThrowIfOutOfMemory
+			deviceThrowIfHandle
+			throwHr("Unable to save file.");
 	}
 }
 
@@ -483,12 +492,12 @@ void DeviceClient::SaveFile(DWORD page, DWORD file, String^ filename, ServerRequ
 void _DisplayFile(DirectOutputClient^ client, void* device, DWORD page, DWORD index, DWORD file, SRequestStatus* status) {
 	if (!client->_DisplayFile)
 		throw gcnew NotImplementedException;
-	switch (client->_DisplayFile(device, page, file, index, status)) {
+	switchHr(client->_DisplayFile(device, page, file, index, status)) {
 	case S_OK: break;
-	case E_NOTIMPL: throw gcnew NotImplementedException("The device does not support displaying files.");
-		throwIfOutOfMemory
-			throwIfInvalidDevice
-			throwDefault("Undable to display file.")
+		throwIfNotImpl("The device does not support displaying files.")
+			deviceThrowIfOutOfMemory
+			deviceThrowIfHandle
+			throwHr("Undable to display file.")
 	}
 }
 
@@ -503,12 +512,12 @@ void DeviceClient::DisplayFile(DWORD page, DWORD index, DWORD file, ServerReques
 void _DeleteFile(DirectOutputClient^ client, void* device, DWORD page, DWORD file, SRequestStatus* status) {
 	if (!client->_DeleteFile)
 		throw gcnew NotImplementedException;
-	switch (client->_DeleteFile(device, page, file, status)) {
+	switchHr(client->_DeleteFile(device, page, file, status)) {
 	case S_OK: break;
-	case E_NOTIMPL: throw gcnew NotImplementedException("The device does not support deleting files.");
-		throwIfOutOfMemory
-			throwIfInvalidDevice
-			throwDefault("Unable to delete file.")
+		throwIfNotImpl("The device does not support deleting files.")
+			deviceThrowIfOutOfMemory
+			deviceThrowIfHandle
+			throwHr("Unable to delete file.")
 	}
 }
 

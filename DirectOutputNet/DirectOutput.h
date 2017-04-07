@@ -157,6 +157,7 @@ namespace Saitek {
 			void* _device;
 			DeviceClient(DirectOutputClient^ client, void* device);
 			~DeviceClient();
+			System::Collections::Generic::SortedSet<DWORD>^ pages = gcnew System::Collections::Generic::SortedSet<DWORD>;
 
 		public:
 			System::Guid GetDeviceType();
