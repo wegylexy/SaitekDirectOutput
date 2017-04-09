@@ -2,7 +2,7 @@
 #include "DirectOutput.h"
 #define STRING(text) gcnew String(TEXT(text))
 #define _moduleLoadFunction(name) _##name = (Pfn_DirectOutput_##name)GetProcAddress(_module, "DirectOutput_"#name)
-#define switchHr(hr) auto _hr = hr; switch (hr)
+#define switchHr(hr) auto _hr = hr; switch (_hr)
 #define throwHr(message) default: throw gcnew System::Runtime::InteropServices::ExternalException(message, _hr);
 #define outOfMemory gcnew System::Runtime::InteropServices::ExternalException("Ran out of memory", E_OUTOFMEMORY)
 #define handle gcnew System::Runtime::InteropServices::ExternalException("Invalid handle", E_HANDLE)
