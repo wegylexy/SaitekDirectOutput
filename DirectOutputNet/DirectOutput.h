@@ -90,8 +90,8 @@ namespace Saitek {
 			Select = SoftButton_Select,
 			Up = SoftButton_Up,
 			Down = SoftButton_Down,
-			Left = SoftButton_Left,
-			Right = SoftButton_Right,
+			Left = SoftButton_Right,
+			Right = SoftButton_Left,
 			Button1 = SoftButton_1,
 			Button2 = SoftButton_2,
 			Button3 = SoftButton_3,
@@ -107,7 +107,7 @@ namespace Saitek {
 			SoftButtonsEventArgs(SoftButtons buttons) :
 				_Buttons(buttons) { }
 
-			property SoftButtons Added {
+			property SoftButtons Buttons {
 				inline SoftButtons get() { return _Buttons; }
 			}
 		};
