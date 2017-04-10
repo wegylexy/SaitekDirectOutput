@@ -558,8 +558,13 @@ void FipClient::SetImage(DWORD page, Image^ image)
 		BitmapData^ b;
 		try {
 			b = bitmap->LockBits(System::Drawing::Rectangle(0, 0, 320, 240), ImageLockMode::ReadOnly, PixelFormat::Format24bppRgb);
-			for (auto i = 0; i < 240; ++i)
-				memcpy_s(data + b->Stride*(239 - i), 960, (void*)(b->Scan0 + b->Stride * i), 960);
+			for (auto i = 0; i < 240; ++i) {
+				switchHr(memcpy_s(data + b->Stride*(239 - i), 960, (void*)(b->Scan0 + b->Stride * i), 960)) {
+	case S_OK: break;
+	case EINVAL: throw gcnew ArgumentException("Invalid argument.", "dest|destSize|src|count");
+		throwHr("Error copying bytes between buffers.");
+				}
+			}
 		}
 		finally{
 			bitmap->UnlockBits(b);
