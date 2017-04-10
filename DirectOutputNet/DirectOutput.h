@@ -4,6 +4,11 @@
 
 namespace Saitek {
 	namespace DirectOutput {
+		public ref class PageNotActiveException : System::AccessViolationException {
+		internal:
+			PageNotActiveException(System::String^ message);
+		};
+
 		public ref class DeviceChangedEventArgs : System::EventArgs
 		{
 			System::IntPtr _Device;
@@ -148,10 +153,12 @@ namespace Saitek {
 
 		public ref class DeviceClient {
 			System::Runtime::InteropServices::GCHandle _this;
-			DirectOutputClient^ _client;
 			SoftButtonsEventHandler^ _SoftButtons;
 			PageEventHandler^ _Page;
 			int _registeredSoftButtonCallback = 0, _registeredPageCallback = 0;
+
+		protected:
+			DirectOutputClient^ _client;
 
 		internal:
 			void* _device;
@@ -222,6 +229,15 @@ namespace Saitek {
 				X52Pro = FromGUID(DeviceType_X52Pro);
 
 			inline static System::String^ GetName(System::Guid guid) { return guid == Fip ? "Saitek Pro Flight Instrument Panel" : guid == X52Pro ? "Saitek X52Pro Flight Controller" : "Unknown"; }
+		};
+
+		public ref class FipClient : DeviceClient {
+		internal:
+			inline FipClient(DirectOutputClient^ client, void* device) :
+				DeviceClient(client, device) { }
+
+		public:
+			void SetImage(DWORD page, System::Drawing::Image^ image);
 		};
 	}
 }

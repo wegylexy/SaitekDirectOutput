@@ -10,13 +10,18 @@
 #define throwIfHandle(message) case E_HANDLE: throw gcnew System::InvalidOperationException(message, handle);
 #define throwIfInvalidArg(message, paramName) case E_INVALIDARG: throw gcnew System::ArgumentException(message, paramName, gcnew System::Runtime::InteropServices::ExternalException("One or more argruments are invalid", E_INVALIDARG));
 #define throwIfNotImpl(message) case E_NOTIMPL: throw gcnew System::NotImplementedException(message, gcnew System::Runtime::InteropServices::ExternalException("Not implemented", E_NOTIMPL));
-#define deviceThrowIfPageNotActive case E_PAGENOTACTIVE: throw gcnew System::Runtime::InteropServices::ExternalException("The specified page is not active. Displaying information is not permitted when the page is not active.", E_PAGENOTACTIVE);
+#define deviceThrowIfPageNotActive(message) case E_PAGENOTACTIVE: throw gcnew Saitek::DirectOutput::PageNotActiveException(message);
 #define deviceThrowIfOutOfMemory case E_OUTOFMEMORY: throw gcnew System::OutOfMemoryException("Insufficient memory to complete the request.", outOfMemory);
 #define deviceThrowIfHandle case E_HANDLE: throw gcnew System::ArgumentException("The device handle specified is invalid.", "device", handle);
 
 using namespace System;
+using namespace System::Drawing;
+using namespace System::Drawing::Imaging;
 using namespace System::Runtime::InteropServices;
 using namespace Saitek::DirectOutput;
+
+PageNotActiveException::PageNotActiveException(String^ message) :
+	AccessViolationException(message, gcnew ExternalException(message, E_PAGENOTACTIVE)) { }
 
 bool DirectOutputClient::_GetDirectOutputFilename(LPTSTR filename, DWORD length) {
 	bool retval(false);
@@ -158,7 +163,16 @@ void DirectOutputClient::Enumerate() {
 	}
 }
 
-DeviceClient^ DirectOutputClient::CreateDeviceClient(System::IntPtr device) { return gcnew DeviceClient(this, (void*)device); }
+DeviceClient^ DirectOutputClient::CreateDeviceClient(System::IntPtr device) {
+	if (_GetDeviceType) {
+		GUID guid;
+		if (S_OK == _GetDeviceType((void*)device, &guid)) {
+			if (guid == DeviceType_Fip)
+				return gcnew FipClient(this, (void*)device);
+		}
+	}
+	return gcnew DeviceClient(this, (void*)device);
+}
 
 DeviceClient::DeviceClient(DirectOutputClient^ client, void* device) :
 	_client(client), _device(device), _this(GCHandle::Alloc(this, GCHandleType::WeakTrackResurrection)) { }
@@ -322,7 +336,7 @@ void DeviceClient::SetLed(DWORD page, DWORD index, bool value) {
 		throw gcnew NotImplementedException;
 	switchHr(_client->_SetLed(_device, page, index, value)) {
 	case S_OK: break;
-		deviceThrowIfPageNotActive
+		deviceThrowIfPageNotActive("The specified page is not active. Displaying information is not permitted when the page is not active.")
 			throwIfInvalidArg("The page does not reference a valid page id, or the index does not specifiy a valid LED id.", "page|id")
 			deviceThrowIfHandle
 			throwHr("Unable to set LED.")
@@ -334,7 +348,7 @@ void DeviceClient::SetString(DWORD page, DWORD index, String^ value) {
 		throw gcnew NotImplementedException;
 	switchHr(_client->_SetString(_device, page, index, value ? value->Length : 0, value ? CString(value) : (LPCTSTR)NULL)) {
 	case S_OK: break;
-		deviceThrowIfPageNotActive
+		deviceThrowIfPageNotActive("The specified page is not active. Displaying information is not permitted when the page is not active.")
 			throwIfInvalidArg("The page does not reference a valid page id, or the index does not reference a valid string id.", "page|id")
 			deviceThrowIfOutOfMemory
 			deviceThrowIfHandle
@@ -348,13 +362,12 @@ void DeviceClient::SetImage(DWORD page, DWORD index, array<Byte>^ value) {
 	pin_ptr<Byte> _value = &value[0];
 	switchHr(_client->_SetImage(_device, page, index, value->Length, _value)) {
 	case S_OK: break;
-		deviceThrowIfPageNotActive
+		deviceThrowIfPageNotActive("The specified page is not active. Displaying information is not permitted when the page is not active.")
 			throwIfInvalidArg("The page argument does not reference a valid page id, or the index does not reference a valid image id.", "page|index")
 			deviceThrowIfOutOfMemory
 			deviceThrowIfHandle
 			throwHr("Unable to set image.")
 	}
-
 }
 
 void DeviceClient::SetImageFromFile(DWORD page, DWORD index, String^ filename) {
@@ -362,7 +375,7 @@ void DeviceClient::SetImageFromFile(DWORD page, DWORD index, String^ filename) {
 		throw gcnew NotImplementedException;
 	switchHr(_client->_SetImageFromFile(_device, page, index, filename->Length, (CString)filename)) {
 	case S_OK: break;
-		deviceThrowIfPageNotActive
+		deviceThrowIfPageNotActive("The specified page is not active. Displaying information is not permitted when the page is not active.")
 			throwIfInvalidArg("The page does not refereence a valid page id, or the index does not reference a valid image id.", "page|index")
 			deviceThrowIfOutOfMemory
 			deviceThrowIfHandle
@@ -432,7 +445,7 @@ void _SendServerMessage(DirectOutputClient^ client, void* device, DWORD serverId
 	switchHr(client->_SendServerMsg(device, serverId, request, page, in->Length, _in, out->Length, _out, status)) {
 	case S_OK: break;
 		throwIfNotImpl("The device does not support server applications.")
-			deviceThrowIfPageNotActive
+			deviceThrowIfPageNotActive("The specified page is not active and the server application attempted to access the display.")
 			deviceThrowIfOutOfMemory
 			deviceThrowIfHandle
 			throwHr("Unable to send server message.");
@@ -454,7 +467,7 @@ void _SendServerFile(DirectOutputClient^ client, void* device, DWORD serverId, D
 	switchHr(client->_SendServerFile(device, serverId, request, page, inHeader->Length, _inHeader, filename->Length, (CString)filename, out->Length, _out, status)) {
 	case S_OK: break;
 		throwIfNotImpl("The device does not support server applications.")
-			deviceThrowIfPageNotActive
+			deviceThrowIfPageNotActive("The specified page is not active and the server application attempted to access the display.")
 			deviceThrowIfOutOfMemory
 			deviceThrowIfHandle
 			throwHr("Unable to send server file.");
@@ -527,4 +540,41 @@ void DeviceClient::DeleteFile(DWORD page, DWORD file, ServerRequestStatus% statu
 	SRequestStatus _status;
 	try { _DeleteFile(_client, _device, page, file, NULL); }
 	finally { _ServerRequestStatus(status, _status); }
+}
+
+void FipClient::SetImage(DWORD page, Image^ image)
+{
+	byte data[230400];
+	auto dispose = false;
+	Bitmap^ bitmap = dynamic_cast<Bitmap^>(image);
+	try {
+		if (bitmap == nullptr || bitmap->PixelFormat != PixelFormat::Format24bppRgb || bitmap->Width != 320 || bitmap->Height != 240) {
+			dispose = true;
+			bitmap = gcnew Bitmap(320, 240, PixelFormat::Format24bppRgb);
+			auto g = Graphics::FromImage(bitmap);
+			try { g->DrawImage(image, 0, 0, 320, 240); }
+			finally { delete g; }
+		}
+		BitmapData^ b;
+		try {
+			b = bitmap->LockBits(System::Drawing::Rectangle(0, 0, 320, 240), ImageLockMode::ReadOnly, PixelFormat::Format24bppRgb);
+			for (auto i = 0; i < 240; ++i)
+				memcpy_s(data + b->Stride*(239 - i), 960, (void*)(b->Scan0 + b->Stride * i), 960);
+		}
+		finally{
+			bitmap->UnlockBits(b);
+		}
+	}
+	finally {
+		if (dispose)
+			delete bitmap;
+	}
+	switchHr(_client->_SetImage(_device, page, 0, 230400, &data)) {
+	case S_OK: break;
+		deviceThrowIfPageNotActive("The specified page is not active. Displaying information is not permitted when the page is not active.")
+			throwIfInvalidArg("The page argument does not reference a valid page id.", "page")
+			deviceThrowIfOutOfMemory
+			deviceThrowIfHandle
+			throwHr("Unable to set image.")
+	}
 }
