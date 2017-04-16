@@ -15,6 +15,7 @@
 #define deviceThrowIfHandle case E_HANDLE: throw gcnew System::ArgumentException("The device handle specified is invalid.", "device", handle);
 
 using namespace System;
+using namespace System::Collections::Generic;
 using namespace System::Drawing;
 using namespace System::Drawing::Imaging;
 using namespace System::Runtime::InteropServices;
@@ -119,13 +120,6 @@ void _DeviceChangeCallback(void* hDevice, bool bAdded, void* pvContext) {
 	_this->DeviceChanged(_this, gcnew DeviceChangedEventArgs(IntPtr(hDevice), bAdded));
 }
 
-void _DeviceEnumerateCallback(void* hDevice, void* pvContext) {
-	auto _this = (DirectOutputClient^)GCHandle::FromIntPtr((IntPtr)pvContext).Target;
-	if (!_this)
-		throw gcnew ObjectDisposedException("DirectOutput client disposed.");
-	_this->DeviceChanged(_this, gcnew DeviceChangedEventArgs(IntPtr(hDevice), true));
-}
-
 void DirectOutputClient::DeviceChanged::add(DeviceChangedEventHandler^ handler) {
 	if (!_RegisterDeviceCallback)
 		throw gcnew NotImplementedException;
@@ -151,16 +145,18 @@ void DirectOutputClient::DeviceChanged::raise(Object^ sender, DeviceChangedEvent
 		_DeviceChanged->Invoke(sender, e);
 }
 
-void DirectOutputClient::Enumerate() {
+void _DeviceEnumerateCallback(void* hDevice, void* pvContext) { (*(List<IntPtr>^*)pvContext)->Add(IntPtr(hDevice)); }
+
+array<IntPtr>^ DirectOutputClient::GetDeviceHandles() {
 	if (!_Enumerate)
 		throw gcnew NotImplementedException;
-	if (!_registeredDeviceCallback)
-		throw gcnew InvalidOperationException("DeviceChanged event has no handlers.");
-	switchHr(_Enumerate(_DeviceEnumerateCallback, (void*)(IntPtr)_this)) {
+	auto devices = gcnew List<IntPtr>;
+	switchHr(_Enumerate(_DeviceEnumerateCallback, &devices)) {
 	case S_OK: break;
 		throwIfHandle("DirectOutput was not initialized.")
 			throwHr("Unable to enumerate devices.")
 	}
+	return devices->ToArray();
 }
 
 DeviceClient^ DirectOutputClient::CreateDeviceClient(System::IntPtr device) {

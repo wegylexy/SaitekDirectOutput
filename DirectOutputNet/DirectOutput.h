@@ -85,7 +85,7 @@ namespace Saitek {
 			void raise(System::Object^ sender, DeviceChangedEventArgs^ e);
 			}
 
-			void Enumerate();
+			cli::array<System::IntPtr>^ GetDeviceHandles();
 			DeviceClient^ CreateDeviceClient(System::IntPtr device);
 		};
 
